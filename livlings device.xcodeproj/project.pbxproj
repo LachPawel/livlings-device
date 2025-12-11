@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		8FD11BE72EEB3C20002BBF53 /* ElevenLabs in Frameworks */ = {isa = PBXBuildFile; productRef = 8FD11BE62EEB3C20002BBF53 /* ElevenLabs */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		8FD5E4CB2EEB376800860C11 /* livlings device.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "livlings device.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8FD11BE72EEB3C20002BBF53 /* ElevenLabs in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +70,7 @@
 			);
 			name = "livlings device";
 			packageProductDependencies = (
+				8FD11BE62EEB3C20002BBF53 /* ElevenLabs */,
 			);
 			productName = "livlings device";
 			productReference = 8FD5E4CB2EEB376800860C11 /* livlings device.app */;
@@ -94,6 +100,9 @@
 			);
 			mainGroup = 8FD5E4C22EEB376800860C11;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				8FD11BE52EEB3C20002BBF53 /* XCRemoteSwiftPackageReference "elevenlabs-swift-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8FD5E4CC2EEB376800860C11 /* Products */;
 			projectDirPath = "";
@@ -268,9 +277,13 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "zeroglabs.livlings-device";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -296,9 +309,13 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "zeroglabs.livlings-device";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -324,6 +341,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		8FD11BE52EEB3C20002BBF53 /* XCRemoteSwiftPackageReference "elevenlabs-swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/elevenlabs/elevenlabs-swift-sdk";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		8FD11BE62EEB3C20002BBF53 /* ElevenLabs */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8FD11BE52EEB3C20002BBF53 /* XCRemoteSwiftPackageReference "elevenlabs-swift-sdk" */;
+			productName = ElevenLabs;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 8FD5E4C32EEB376800860C11 /* Project object */;
 }
