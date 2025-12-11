@@ -1,4 +1,3 @@
-//
 //  DeviceMainView.swift
 //  livlings device
 //
@@ -111,6 +110,18 @@ struct DeviceMainView: View {
                         }
                     }
                     
+                    // Music generation indicator
+                    if deviceBrain.isGeneratingMusic {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .purple))
+                                .scaleEffect(0.8)
+                            Text("Generating lullaby...")
+                                .font(.caption)
+                                .foregroundColor(.purple)
+                        }
+                    }
+                    
                     Text(deviceBrain.statusMessage)
                         .font(.subheadline)
                         .foregroundColor(.gray)
@@ -167,6 +178,27 @@ struct DeviceMainView: View {
                                 Task { await deviceBrain.goToSleep() }
                             }
                             .buttonStyle(ToyButtonStyle(color: .gray))
+                        }
+                        
+                        HStack(spacing: 15) {
+                            Button(deviceBrain.isPlayingMusic ? "⏹️ Stop Music" : "🎵 Lullaby") {
+                                Task {
+                                    if deviceBrain.isPlayingMusic {
+                                        deviceBrain.stopMusic()
+                                    } else {
+                                        await deviceBrain.generateSleepMusic()
+                                    }
+                                }
+                            }
+                            .buttonStyle(ToyButtonStyle(color: deviceBrain.isPlayingMusic ? .red : .purple))
+                            .disabled(deviceBrain.isGeneratingMusic)
+                            
+                            Button("🔑 Test Key") {
+                                Task {
+                                    await deviceBrain.testAPIKey()
+                                }
+                            }
+                            .buttonStyle(ToyButtonStyle(color: .cyan))
                         }
                         
                         // Mute toggle
@@ -266,6 +298,11 @@ class DeviceBrain: NSObject, ObservableObject {
     @Published var isMuted = false
     @Published var lastAgentMessage: String?
     
+    // Music State
+    @Published var isPlayingMusic = false
+    @Published var isGeneratingMusic = false
+    private var musicPlayer: AVAudioPlayer?
+    
     // ElevenLabs conversation
     private var conversation: Conversation?
     private var cancellables = Set<AnyCancellable>()
@@ -274,13 +311,14 @@ class DeviceBrain: NSObject, ObservableObject {
     private let motionManager = CMMotionManager()
     private var cryDetectionEngine: AVAudioEngine?
     
-    // Peer connectivity
+    // Peer connectivity//
     private var peerSession: MCSession?
     private var peerID: MCPeerID!
     private var advertiser: MCNearbyServiceAdvertiser?
     
     // ⚠️ CONFIGURE THIS:
-    let ELEVENLABS_AGENT_ID = "" // Create at elevenlabs.io/conversational-ai
+    let ELEVENLABS_AGENT_ID = "" // Create at elevenlabs.io/conversational-ai (starts with "agent_")
+    let ELEVENLABS_API_KEY = ""  // Get from elevenlabs.io/app/settings/api-keys (starts with "sk_")
     
     // Conversation memory (persisted to UserDefaults)
     var conversationMemory: [String: String] {
@@ -301,6 +339,314 @@ class DeviceBrain: NSObject, ObservableObject {
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
         activityLog.append("[\(timestamp)] \(message)")
         print("🧸 \(message)")
+    }
+    
+    // MARK: - ElevenLabs Music Generation
+    
+    func testAPIKey() async {
+        log("🔑 Testing API key...")
+        
+        guard !ELEVENLABS_API_KEY.isEmpty else {
+            log("❌ API key is empty!")
+            return
+        }
+        
+        guard ELEVENLABS_API_KEY.hasPrefix("sk_") else {
+            log("❌ API key format wrong! Should start with 'sk_'")
+            return
+        }
+        
+        // Try a simple API call to verify the key works
+        let request = NSMutableURLRequest(
+            url: NSURL(string: "https://api.elevenlabs.io/v1/user")! as URL,
+            cachePolicy: .useProtocolCachePolicy,
+            timeoutInterval: 10.0
+        )
+        request.httpMethod = "GET"
+        request.allHTTPHeaderFields = [
+            "xi-api-key": ELEVENLABS_API_KEY
+        ]
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request as URLRequest)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                log("❌ Invalid response")
+                return
+            }
+            
+            if httpResponse.statusCode == 200 {
+                log("✅ API key is VALID!")
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    log("✅ User info: \(json)")
+                }
+            } else if httpResponse.statusCode == 401 {
+                log("❌ API key is INVALID! Status: 401")
+                log("❌ Go to elevenlabs.io/app/settings/api-keys to generate a new one")
+                if let errorString = String(data: data, encoding: .utf8) {
+                    log("❌ Error: \(errorString)")
+                }
+            } else {
+                log("⚠️ Unexpected status: \(httpResponse.statusCode)")
+                if let errorString = String(data: data, encoding: .utf8) {
+                    log("⚠️ Response: \(errorString)")
+                }
+            }
+        } catch {
+            log("❌ Network error: \(error.localizedDescription)")
+        }
+    }
+    
+    func generateSleepMusic() async {
+        guard !ELEVENLABS_API_KEY.isEmpty else {
+            log("⚠️ Set your ElevenLabs API Key!")
+            statusMessage = "Configure API Key"
+            return
+        }
+        
+        // Validate API key format
+        guard ELEVENLABS_API_KEY.hasPrefix("sk_") else {
+            log("❌ Invalid API Key format! Should start with 'sk_'")
+            statusMessage = "Invalid API Key"
+            return
+        }
+        
+        isGeneratingMusic = true
+        let wasConversationActive = isAgentConnected
+        state = .playingMelody
+        statusMessage = "Creating lullaby..."
+        log("🎵 Generating sleep music...")
+        
+        // IMPORTANT: Stop ALL audio activities to release the audio session
+        
+        // Stop cry detection (uses microphone)
+        stopCryDetection()
+        
+        // End conversation if active
+        if wasConversationActive {
+            log("⏸️ Ending conversation for music playback...")
+            await endElevenLabsConversation()
+        }
+        
+        // Give audio session time to fully release
+        log("⏳ Waiting for audio session cleanup...")
+        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+        log("✅ Ready for music playback")
+        
+        do {
+            let audioData = try await composeSleepMusic()
+            try await playGeneratedMusic(audioData)
+            log("✅ Music playing!")
+            statusMessage = "Playing lullaby..."
+            sendToParent(ToyMessage(type: .storyStarted, data: ["type": "lullaby"]))
+        } catch {
+            log("❌ Music generation failed: \(error.localizedDescription)")
+            statusMessage = "Music failed"
+            
+            // Resume conversation if it was active
+            if wasConversationActive {
+                await startElevenLabsConversation()
+            } else {
+                state = .sleeping
+            }
+        }
+        
+        isGeneratingMusic = false
+    }
+    
+    private func composeSleepMusic() async throws -> Data {
+        // Build a child-appropriate lullaby prompt
+        var prompt = "A gentle, soothing lullaby for children. "
+        prompt += "Soft piano and gentle strings. "
+        prompt += "Slow tempo around 60 BPM. "
+        prompt += "Calming, peaceful, dreamy atmosphere. "
+        prompt += "No vocals, purely instrumental. "
+        prompt += "Perfect for helping a child fall asleep."
+        
+        if let name = childName {
+            log("🎵 Creating lullaby for \(name)")
+        }
+        
+        // Prepare request body
+        let parameters: [String: Any] = [
+            "prompt": prompt,
+            "music_length_ms": 60000,
+            "model_id": "music_v1",
+            "force_instrumental": true
+        ]
+        
+        let postData = try JSONSerialization.data(withJSONObject: parameters, options: [])
+        
+        // Use simple /v1/music endpoint (returns direct audio, no multipart)
+        // This is simpler and more reliable than /v1/music/detailed
+        let request = NSMutableURLRequest(
+            url: NSURL(string: "https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128")! as URL,
+            cachePolicy: .useProtocolCachePolicy,
+            timeoutInterval: 120.0
+        )
+        request.httpMethod = "POST"
+        request.allHTTPHeaderFields = [
+            "Content-Type": "application/json",
+            "xi-api-key": ELEVENLABS_API_KEY
+        ]
+        request.httpBody = postData as Data
+        
+        log("📡 Requesting music from ElevenLabs...")
+        log("🔑 Using API key: \(String(ELEVENLABS_API_KEY.prefix(10)))...")
+        
+        // Execute request
+        let (data, response) = try await URLSession.shared.data(for: request as URLRequest)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw MusicError.invalidResponse
+        }
+        
+        log("📥 Response status: \(httpResponse.statusCode)")
+        if let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") {
+            log("📄 Content-Type: \(contentType)")
+        }
+        
+        // Success case
+        if httpResponse.statusCode == 200 {
+            // Check content type
+            if let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") {
+                if contentType.contains("multipart") {
+                    // Multipart response (from /detailed endpoint)
+                    log("📦 Parsing multipart response...")
+                    return try parseMultipartResponse(data: data, contentType: contentType)
+                } else if contentType.contains("audio/") {
+                    // Direct audio response
+                    log("✅ Received direct audio: \(data.count) bytes")
+                    return data
+                }
+            }
+            
+            // Fallback: if it looks like audio data (size check)
+            if data.count > 1000 {
+                log("✅ Received data: \(data.count) bytes (assuming audio)")
+                return data
+            }
+        }
+        
+        // Error handling
+        log("❌ API Error - Status: \(httpResponse.statusCode)")
+        
+        if let errorString = String(data: data, encoding: .utf8) {
+            log("❌ Response: \(errorString)")
+        }
+        
+        if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let detail = errorJson["detail"] as? String {
+            throw MusicError.apiError(detail)
+        }
+        
+        throw MusicError.apiError("Status: \(httpResponse.statusCode)")
+    }
+    
+    private func parseMultipartResponse(data: Data, contentType: String) throws -> Data {
+        // Extract boundary from content type
+        // Format: multipart/mixed; boundary=----WebKitFormBoundary...
+        guard let boundaryRange = contentType.range(of: "boundary=") else {
+            // If we can't find boundary, assume raw audio
+            return data
+        }
+        
+        let boundary = String(contentType[boundaryRange.upperBound...])
+            .trimmingCharacters(in: .whitespaces)
+        
+        // Convert data to string to find parts
+        guard let dataString = String(data: data, encoding: .utf8) else {
+            // Binary data, likely just audio
+            return data
+        }
+        
+        // Split by boundary and find the audio part
+        let parts = dataString.components(separatedBy: "--\(boundary)")
+        
+        for part in parts {
+            // Look for audio content type
+            if part.contains("audio/") || part.contains("application/octet-stream") {
+                // Find the empty line that separates headers from body
+                if let headerEnd = part.range(of: "\r\n\r\n") {
+                    let audioDataString = String(part[headerEnd.upperBound...])
+                    if let audioData = audioDataString.data(using: .utf8) {
+                        return audioData
+                    }
+                }
+            }
+        }
+        
+        // Fallback: return raw data assuming it's audio
+        log("⚠️ Could not parse multipart, using raw data")
+        return data
+    }
+    
+    private func playGeneratedMusic(_ audioData: Data) async throws {
+        // Save to temp file
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lullaby_\(UUID().uuidString).mp3")
+        
+        try audioData.write(to: tempURL)
+        log("💾 Saved music to: \(tempURL.lastPathComponent)")
+        
+        // Configure audio session for playback
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+        try session.setActive(true)
+        
+        // Create and configure player
+        musicPlayer = try AVAudioPlayer(contentsOf: tempURL)
+        musicPlayer?.delegate = self
+        musicPlayer?.numberOfLoops = -1 // Loop indefinitely
+        musicPlayer?.volume = 0.7 // Gentle volume for sleep
+        
+        // Fade in
+        musicPlayer?.volume = 0
+        musicPlayer?.play()
+        isPlayingMusic = true
+        
+        // Gradual fade in over 2 seconds
+        for i in 1...20 {
+            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1s
+            await MainActor.run {
+                self.musicPlayer?.volume = Float(i) * 0.035 // Max 0.7
+            }
+        }
+    }
+    
+    func stopMusic() {
+        guard isPlayingMusic else { return }
+        
+        log("⏹️ Stopping music")
+        
+        // Fade out
+        Task {
+            for i in (0..<20).reversed() {
+                try? await Task.sleep(nanoseconds: 50_000_000) // 0.05s
+                await MainActor.run {
+                    self.musicPlayer?.volume = Float(i) * 0.035
+                }
+            }
+            
+            await MainActor.run {
+                self.musicPlayer?.stop()
+                self.musicPlayer = nil
+                self.isPlayingMusic = false
+            }
+            
+            log("🎵 Music stopped, returning to sleep mode")
+            
+            // Deactivate audio session
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            
+            await MainActor.run {
+                self.state = .sleeping
+                self.statusMessage = "Shake me to wake up!"
+                
+                // Restart cry detection
+                self.startCryDetection()
+            }
+        }
     }
     
     // MARK: - ElevenLabs Conversation
@@ -394,6 +740,9 @@ class DeviceBrain: NSObject, ObservableObject {
             .sink { [weak self] agentState in
                 guard let self else { return }
                 self.agentState = agentState
+                
+                // Don't override state if playing music
+                guard !self.isPlayingMusic else { return }
                 
                 switch agentState {
                 case .listening:
@@ -674,6 +1023,11 @@ class DeviceBrain: NSObject, ObservableObject {
     func goToSleep() async {
         log("😴 Going to sleep")
         
+        // Stop music if playing
+        if isPlayingMusic {
+            stopMusic()
+        }
+        
         await endElevenLabsConversation()
         
         state = .sleeping
@@ -709,11 +1063,8 @@ class DeviceBrain: NSObject, ObservableObject {
                 }
                 
             case .playMelody:
-                if isAgentConnected {
-                    try? await conversation?.sendMessage(
-                        "Can you sing me a lullaby?"
-                    )
-                }
+                // Generate sleep music via ElevenLabs
+                await generateSleepMusic()
                 
             case .speak:
                 if let text = command.data["text"], isAgentConnected {
@@ -733,6 +1084,43 @@ class DeviceBrain: NSObject, ObservableObject {
                     await startElevenLabsConversation()
                 }
             }
+        }
+    }
+}
+
+// MARK: - Music Error
+enum MusicError: LocalizedError {
+    case invalidResponse
+    case apiError(String)
+    case noAudioData
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidResponse:
+            return "Invalid response from music API"
+        case .apiError(let message):
+            return "Music API error: \(message)"
+        case .noAudioData:
+            return "No audio data received"
+        }
+    }
+}
+
+// MARK: - AVAudioPlayerDelegate
+extension DeviceBrain: AVAudioPlayerDelegate {
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in
+            // Only called if loops = 0 (not looping)
+            self.isPlayingMusic = false
+            self.state = self.isAgentConnected ? .listening : .sleeping
+            self.log("🎵 Music finished")
+        }
+    }
+    
+    nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        Task { @MainActor in
+            self.log("❌ Music decode error: \(error?.localizedDescription ?? "unknown")")
+            self.isPlayingMusic = false
         }
     }
 }
