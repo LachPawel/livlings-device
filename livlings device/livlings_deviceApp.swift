@@ -11,7 +11,7 @@ import SwiftUI
 struct livlings_deviceApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            DeviceMainView()
         }
     }
 }
