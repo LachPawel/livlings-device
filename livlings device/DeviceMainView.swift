@@ -491,7 +491,7 @@ class DeviceBrain: NSObject, ObservableObject {
     // MARK: - Peer Connectivity (Phone-to-Phone)
     
     private func setupPeerConnectivity() {
-        peerID = MCPeerID(displayName: "SzumisToy")
+        peerID = MCPeerID(displayName: "Hummy Toy")
         peerSession = MCSession(peer: peerID, securityIdentity: nil, encryptionPreference: .required)
         peerSession?.delegate = self
         

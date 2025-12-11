@@ -265,7 +265,10 @@
 				DEVELOPMENT_TEAM = 8T43S264Q5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "livlings-device-Info.plist";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "needed for p2p";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Needed for the voice agent to work";
+				INFOPLIST_KEY_NSMotionUsageDescription = "we need this to wake up the toy";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -298,7 +301,10 @@
 				DEVELOPMENT_TEAM = 8T43S264Q5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "livlings-device-Info.plist";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "needed for p2p";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Needed for the voice agent to work";
+				INFOPLIST_KEY_NSMotionUsageDescription = "we need this to wake up the toy";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
