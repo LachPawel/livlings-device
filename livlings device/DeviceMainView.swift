@@ -243,6 +243,7 @@ enum ToyState: String, Codable {
     case speaking = "speaking"
     case comforting = "comforting"
     case playingMelody = "melody"
+    case playingSound = "sound"
     
     var emoji: String {
         switch self {
@@ -253,6 +254,7 @@ enum ToyState: String, Codable {
         case .speaking: return "🗣️"
         case .comforting: return "🤗"
         case .playingMelody: return "🎵"
+        case .playingSound: return "💓"
         }
     }
     
@@ -265,6 +267,7 @@ enum ToyState: String, Codable {
         case .speaking: return "Speaking"
         case .comforting: return "Comforting"
         case .playingMelody: return "Playing Melody"
+        case .playingSound: return "Playing Sound"
         }
     }
     
@@ -277,6 +280,7 @@ enum ToyState: String, Codable {
         case .speaking: return .green
         case .comforting: return .pink
         case .playingMelody: return .yellow
+        case .playingSound: return .cyan
         }
     }
 }
@@ -303,9 +307,17 @@ class DeviceBrain: NSObject, ObservableObject {
     @Published var isGeneratingMusic = false
     private var musicPlayer: AVAudioPlayer?
     
+    // Sound Effects State
+    @Published var isPlayingSound = false
+    @Published var currentSoundType: String?
+    private var soundPlayer: AVAudioPlayer?
+    
     // ElevenLabs conversation
     private var conversation: Conversation?
     private var cancellables = Set<AnyCancellable>()
+    
+    // Client Tools Handler
+    private var toolsHandler: ClientToolsHandler?
     
     // Core components
     private let motionManager = CMMotionManager()
@@ -649,6 +661,237 @@ class DeviceBrain: NSObject, ObservableObject {
         }
     }
     
+    // MARK: - Sound Effects Playback
+    
+    func playSound(type: String) async {
+        stopSound()
+        
+        isPlayingSound = true
+        currentSoundType = type
+        state = .playingSound
+        statusMessage = "Playing \(type)..."
+        
+        log("🔊 Playing sound: \(type)")
+        
+        let prompt = soundPrompt(for: type)
+        
+        do {
+            let audioData = try await generateSoundEffect(prompt: prompt)
+            try await playSoundData(audioData)
+            log("✅ Sound playing: \(type)")
+            sendToParent(ToyMessage(type: .storyStarted, data: ["type": "sound", "sound_type": type]))
+        } catch {
+            log("❌ Sound failed: \(error.localizedDescription)")
+            isPlayingSound = false
+            currentSoundType = nil
+            state = isAgentConnected ? .listening : .sleeping
+        }
+    }
+    
+    private func soundPrompt(for type: String) -> String {
+        switch type {
+        case "heartbeat": return "Calm rhythmic heartbeat, soothing, 60bpm, warm, loopable"
+        case "rain": return "Gentle rain on window, soft patter, no thunder, peaceful, loopable"
+        case "ocean": return "Soft ocean waves on shore, peaceful, calming, loopable"
+        case "white_noise": return "Soft static white noise, gentle consistent, calming, loopable"
+        case "forest": return "Peaceful forest, birds chirping, soft breeze, nature, loopable"
+        case "stars": return "Magical twinkling stars, soft chimes, ethereal sparkles, dreamy, loopable"
+        default: return "Gentle calming ambient sound, soothing, peaceful, loopable"
+        }
+    }
+    
+    private func generateSoundEffect(prompt: String) async throws -> Data {
+        guard !ELEVENLABS_API_KEY.isEmpty else {
+            throw MusicError.apiError("No API key")
+        }
+        
+        let parameters: [String: Any] = [
+            "text": prompt,
+            "duration_seconds": 30.0
+        ]
+        
+        let postData = try JSONSerialization.data(withJSONObject: parameters)
+        
+        let request = NSMutableURLRequest(
+            url: NSURL(string: "https://api.elevenlabs.io/v1/sound-generation")! as URL,
+            cachePolicy: .useProtocolCachePolicy,
+            timeoutInterval: 60.0
+        )
+        request.httpMethod = "POST"
+        request.allHTTPHeaderFields = [
+            "Content-Type": "application/json",
+            "xi-api-key": ELEVENLABS_API_KEY
+        ]
+        request.httpBody = postData as Data
+        
+        log("📡 Requesting sound from ElevenLabs...")
+        
+        let (data, response) = try await URLSession.shared.data(for: request as URLRequest)
+        
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw MusicError.apiError("Sound generation failed")
+        }
+        
+        log("✅ Received sound: \(data.count) bytes")
+        return data
+    }
+    
+    private func playSoundData(_ data: Data) async throws {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sound_\(UUID().uuidString).mp3")
+        
+        try data.write(to: tempURL)
+        
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setActive(true)
+        } catch {
+            log("⚠️ Audio session warning: \(error)")
+        }
+        
+        soundPlayer = try AVAudioPlayer(contentsOf: tempURL)
+        soundPlayer?.numberOfLoops = -1  // Loop forever
+        soundPlayer?.volume = 0.5
+        soundPlayer?.prepareToPlay()
+        soundPlayer?.play()
+        
+        log("▶️ Sound playback started")
+    }
+    
+    func stopSound() {
+        if soundPlayer?.isPlaying == true {
+            log("⏹️ Stopping sound")
+            soundPlayer?.stop()
+        }
+        soundPlayer = nil
+        isPlayingSound = false
+        currentSoundType = nil
+        
+        if !isPlayingMusic {
+            state = isAgentConnected ? .listening : .sleeping
+        }
+    }
+    
+    // MARK: - Lullaby with Styles
+    
+    func playLullaby(style: String) async {
+        guard !ELEVENLABS_API_KEY.isEmpty else {
+            log("⚠️ Set your ElevenLabs API Key!")
+            statusMessage = "Configure API Key"
+            return
+        }
+        
+        guard ELEVENLABS_API_KEY.hasPrefix("sk_") else {
+            log("❌ Invalid API Key format!")
+            return
+        }
+        
+        isGeneratingMusic = true
+        let wasConversationActive = isAgentConnected
+        state = .playingMelody
+        statusMessage = "Creating \(style) lullaby..."
+        log("🎵 Generating \(style) lullaby...")
+        
+        // Stop audio activities
+        stopCryDetection()
+        stopSound()
+        
+        if wasConversationActive {
+            log("⏸️ Ending conversation for lullaby...")
+            await endElevenLabsConversation()
+        }
+        
+        log("⏳ Waiting for audio session cleanup...")
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        log("✅ Ready for lullaby playback")
+        
+        let prompt = lullabyPrompt(for: style)
+        
+        do {
+            let audioData = try await composeSleepMusicWithPrompt(prompt: prompt)
+            try await playGeneratedMusic(audioData)
+            
+            isGeneratingMusic = false
+            isPlayingMusic = true
+            log("✅ Lullaby playing: \(style)")
+            statusMessage = "Playing \(style) lullaby..."
+            
+            sendToParent(ToyMessage(type: .storyStarted, data: ["type": "lullaby", "style": style]))
+        } catch {
+            log("❌ Lullaby failed: \(error.localizedDescription)")
+            statusMessage = "Lullaby failed"
+            isGeneratingMusic = false
+            
+            if wasConversationActive {
+                await startElevenLabsConversation()
+            } else {
+                state = .sleeping
+            }
+        }
+    }
+    
+    private func lullabyPrompt(for style: String) -> String {
+        let name = childName ?? "child"
+        switch style {
+        case "music_box": return "Gentle music box lullaby for \(name), classic melody, soft chimes, 60bpm, dreamy"
+        case "piano": return "Solo piano lullaby for \(name), gentle minimalist, soft keys, peaceful, tender"
+        case "harp": return "Celtic harp lullaby for \(name), ethereal dreamy, soft plucked strings, mystical"
+        case "strings": return "Soft string orchestra lullaby for \(name), gentle violins, warm, peaceful"
+        case "classical": return "Brahms style lullaby for \(name), gentle classical, soft orchestration, timeless"
+        default: return "Gentle instrumental lullaby for \(name), soft calming, 60bpm, perfect for sleep"
+        }
+    }
+    
+    private func composeSleepMusicWithPrompt(prompt: String) async throws -> Data {
+        let parameters: [String: Any] = [
+            "prompt": prompt,
+            "music_length_ms": 60000,
+            "model_id": "music_v1",
+            "force_instrumental": true
+        ]
+        
+        let postData = try JSONSerialization.data(withJSONObject: parameters, options: [])
+        
+        let request = NSMutableURLRequest(
+            url: NSURL(string: "https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128")! as URL,
+            cachePolicy: .useProtocolCachePolicy,
+            timeoutInterval: 120.0
+        )
+        request.httpMethod = "POST"
+        request.allHTTPHeaderFields = [
+            "Content-Type": "application/json",
+            "xi-api-key": ELEVENLABS_API_KEY
+        ]
+        request.httpBody = postData as Data
+        
+        log("📡 Requesting music from ElevenLabs...")
+        
+        let (data, response) = try await URLSession.shared.data(for: request as URLRequest)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw MusicError.invalidResponse
+        }
+        
+        log("📥 Response status: \(httpResponse.statusCode)")
+        
+        if httpResponse.statusCode == 200 {
+            if let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") {
+                if contentType.contains("audio/") {
+                    log("✅ Received direct audio: \(data.count) bytes")
+                    return data
+                }
+            }
+            
+            if data.count > 1000 {
+                return data
+            }
+        }
+        
+        throw MusicError.apiError("Status: \(httpResponse.statusCode)")
+    }
+    
     // MARK: - ElevenLabs Conversation
     
     func startElevenLabsConversation() async {
@@ -680,9 +923,12 @@ class DeviceBrain: NSObject, ObservableObject {
                 systemPrompt += "\nYou don't know the child's name yet. Ask them their name early in the conversation in a friendly way."
             }
             
-            // Configure conversation with custom prompt
-            // Note: Check ElevenLabs SDK docs for exact API - this uses basic config
+            // Configure conversation
             let config = ConversationConfig()
+            
+            // NOTE: Client tools are configured at the AGENT LEVEL on ElevenLabs dashboard
+            // The agent will automatically execute tools configured there
+            // For client-side tools, we need to set up message handlers to detect tool responses
             
             conversation = try await ElevenLabs.startConversation(
                 agentId: ELEVENLABS_AGENT_ID,
@@ -772,6 +1018,11 @@ class DeviceBrain: NSObject, ObservableObject {
                     
                     // Try to extract child's name from conversation
                     self.extractChildNameIfNeeded(from: messages)
+                    
+                    // Parse for action commands embedded in agent response
+                    Task {
+                        await self.parseAndExecuteActions(from: lastMessage.content)
+                    }
                 } else {
                     self.log("👶 Child: \(lastMessage.content.prefix(50))...")
                 }
@@ -782,6 +1033,90 @@ class DeviceBrain: NSObject, ObservableObject {
         conversation.$isMuted
             .receive(on: DispatchQueue.main)
             .assign(to: &$isMuted)
+    }
+    
+    // MARK: - Action Parsing from Agent Messages
+    
+    private func parseAndExecuteActions(from message: String) async {
+        // The agent can embed action commands using special syntax
+        // Format: [ACTION:type:param1:param2]
+        // Examples:
+        //   [ACTION:remember:child_name:Emma]
+        //   [ACTION:play_sound:heartbeat]
+        //   [ACTION:play_lullaby:piano]
+        //   [ACTION:notify_parent:high:Child is scared]
+        
+        let pattern = "\\[ACTION:([^:]+):([^\\]]+)\\]"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+        
+        let nsMessage = message as NSString
+        let matches = regex.matches(in: message, range: NSRange(location: 0, length: nsMessage.length))
+        
+        for match in matches {
+            guard match.numberOfRanges >= 3 else { continue }
+            
+            let actionType = nsMessage.substring(with: match.range(at: 1))
+            let params = nsMessage.substring(with: match.range(at: 2))
+            let paramList = params.split(separator: ":").map(String.init)
+            
+            log("🔧 Detected action: \(actionType) with params: \(paramList)")
+            
+            switch actionType {
+            case "remember":
+                if paramList.count >= 2 {
+                    let key = paramList[0]
+                    let value = paramList[1]
+                    handleRememberAction(key: key, value: value)
+                }
+                
+            case "play_sound":
+                if let soundType = paramList.first {
+                    await playSound(type: soundType)
+                }
+                
+            case "play_lullaby":
+                let style = paramList.first ?? "default"
+                await playLullaby(style: style)
+                
+            case "notify_parent":
+                if paramList.count >= 2 {
+                    let priority = paramList[0]
+                    let message = paramList[1...].joined(separator: " ")
+                    handleNotifyParentAction(message: message, priority: priority)
+                }
+                
+            default:
+                log("⚠️ Unknown action type: \(actionType)")
+            }
+        }
+    }
+    
+    private func handleRememberAction(key: String, value: String) {
+        var memory = conversationMemory
+        memory[key] = value
+        conversationMemory = memory
+        
+        log("💾 Remembered: \(key) = \(value)")
+        
+        // Special handling for child_name
+        if key == "child_name" {
+            childName = value
+            sendToParent(ToyMessage(type: .childInfo, data: ["name": value]))
+            log("👶 Child name set: \(value)")
+        }
+    }
+    
+    private func handleNotifyParentAction(message: String, priority: String) {
+        log("📬 Notifying parent: \(message) [priority: \(priority)]")
+        
+        sendToParent(ToyMessage(
+            type: .notification,
+            data: [
+                "message": message,
+                "priority": priority,
+                "child_name": childName ?? "Child"
+            ]
+        ))
     }
     
     private func extractChildNameIfNeeded(from messages: [Message]) {
@@ -1201,6 +1536,7 @@ enum ToyMessageType: String, Codable {
     case childInfo
     case speaking
     case storyStarted
+    case notification
 }
 
 struct ParentCommand: Codable {
